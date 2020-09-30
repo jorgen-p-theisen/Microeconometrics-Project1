@@ -1,0 +1,255 @@
+%% Project 1 Exercise 2 
+% Purpose: Estimate the parameters of the Cobb Douglas Prod. func.
+% Data: French manufacturing firms, N=441, t=1967,...,1979, T=13
+% Variables:
+% 1. LDSA: log deflated sales
+% 2. LEMP: log of emplyment
+% 3. LCAP: log of adjusted capital stock
+
+% TASK 1: Formulate a linear panel data model for firm sales, and estimate
+% alpha and beta.
+% Will use the following estimators: POLS, BE, RE, FE and FD
+% POLS: Regress all as with usual OLS, see PS2
+% BE: use time-averages (see PS3)
+% RE: assume alpha iid(0,sigma^2_alpha) (see PS3)
+% FE: Within transformed variabels, see PS2
+% FD: Fist differences, see PS2
+
+clear all; clc;                                                             % Clear workspace and command window
+
+%% PREPARATION 
+
+%Read data 
+load('ldsa.dat');                                                           
+load('lcap.dat');
+load('lemp.dat');
+% Data loads as NxT matrices, want to change to stacked, i.e.
+% (ind.#1_1967,ind.#1_1968,...,ind.#1_1979,ind.#2_1967,...)' 
+
+
+
+%Create variables
+global n T x y;                                                             % Create global variables
+n = size(ldsa,1);   %Variables has the same n and T so can use any one
+T = size(ldsa,2);
+y = [];             %create as empty and concatenate each row as a colum     
+x1 =[];             % 'assist' varaibles for the loop 
+x2 =[];
+
+for i=1:n           % Loop over # of rows (ldsa(i,:)' means ldsa at row i, all comuns, transponed) 
+    y_i=ldsa(i,:)'; % extract row i and transpone
+    y = [y;y_i];    % append to y
+    
+    x_1i = lcap(i,:)';
+    x1 = [x1;x_1i];
+    
+    x_2i = lemp(i,:)';
+    x2 = [x2;x_2i];
+end
+x = [ones(T*n,1), x1,x2];   %Included a constant term for POLS, meaning A is constant for all 
+
+%Create labels
+lbly = {'ldsa'};
+lblx = {'Constant'; 'lcap'; 'lemp'};
+
+
+
+%% Estimation using POLS
+[b, se, r, cov, R2, s2] = myols(y,x);       %Standard OLS regression with homoscedastic errors 
+mytable('Pooled OLS',lbly,lblx,b,se,R2,s2);
+se = robust(x,r,n,T);
+mytable('Pooled OLS',lbly,lblx,b,se,R2,s2);
+% Robust standard errors
+
+%% Within-transform the data
+Q=eye(T)-ones(T,T)/T;                                                       % Transformation matrix used for the within transformation 
+xw=perm(Q,x); 
+yw=perm(Q,y);
+
+% Check rank condition 
+ disp(['Rank of within-transformed x: ', num2str(rank(xw))]);
+ disp('Eigenvalues of within-transfirmed x: '); 
+ disp(eig(xw'*xw));                                  
+xw = xw(:,2:3);     %Removes the constant term 
+lblx = lblx(2:3,:);
+
+% FE estimation
+% This estimation uses variance under iid 
+[b_FE, se, r, cov, R2, s2] = myols(yw,xw);
+s2_u=s2*((n*T-size(b_FE,1))/(n*(T-1)-size(b_FE,1)));        % Need to adjust the variance of the FE-estimator, since we estimate N individual intercepts
+s2_FE = s2_u;                                               % Save this one for RE estimation
+cov_FE=s2_FE*inv(xw'*xw);
+se=sqrt(diag(cov_FE));
+mytable('Fixed Effects/ Within Group', lbly, lblx, b_FE, se, R2, s2);
+
+% We now wish do calculate the robust standard errrors 
+% They offer a function for this in problem set 4 called robust() that also corrects for sums 
+se=robust(xw,r,n,T); %Note that this function now uses the previous r, that is the within-transformed errors 
+mytable('Fixed Effects (robust errors w/function)', lbly, lblx, b_FE, se, R2, s2); %Make another table 
+
+
+
+%% Estimation using FD
+% Transform the data 
+D  = [zeros(1,T);[zeros(T-1,1),eye(T-1)]-eye(T-1,T)];                       % Alternative to construct Transformation matrix   
+dx = perm(D,x); dy=perm(D,y);
+dx = dx(:,2:3);
+dy(1:T:end,:) = [];                                                        % Removes every 13th element (starting at 1), i.e. deleting year 1967
+dx(1:T:end,:) = [];                                                        % Leves 5733-441 = 5292 obervations 
+
+% Check rank condition
+disp(['Rank of first-transformed x: ', num2str(rank(dx))]);
+disp('Eigenvalues of first-transfirmed x: '); 
+disp(eig(dx'*dx));
+
+% Estimate FD model using iid errors 
+[b_FD, se, r, cov, R2, s2] = myols(dy,dx);                                     % NOTE: Do not need to correct the variance, since we have removed N observations from the analysis due to differencing
+mytable('FD',lbly,lblx,b_FD,se,R2,s2);
+
+% Calculate robust standard errors 
+se = robust(dx,r,n,T-1);    %Note the T-1 (as we have FD), or else robust() errors 
+mytable('FD, robust errors',lbly,lblx,b_FD,se,R2,s2);
+
+%% Estimation using BE
+% Not sure if this one is even neccecary to consider for other than RE 
+P = eye(T)-Q;    %ones(T,T)/T%                                                           % Transformation matrix used for the between transformation                    
+
+% BETWEEN TRANSFORM DATA AND COMPUTE BETWEEN ESTbIMATE 
+py = perm(P,y);
+px = perm(P,x);
+
+
+% Estimation, iid 
+[b_BE, se, u, cov, R2, s2_BE] = myols(py,px);                               % Note: we are actually only insterested in the iid variance from this 
+
+lblx = {'Constant'; 'lcap'; 'lemp'};
+mytable('Between Estimator, iid errors', lbly, lblx, b_BE, se, R2, s2_BE);
+
+se = robust(px,u,n,T);
+mytable('Between Estimator, robust', lbly, lblx, b_BE, se, R2, s2_BE);
+
+%% Estimation using RE 
+% COMPUTE LAMBDA 
+s2_c = s2_BE - s2_FE/T;                                                     % Equation (8) calculates the variance of the time-invariant part of the variance, sigma_c.
+lambda = 1-sqrt(s2_FE/(s2_FE+T*s2_c));
+ 
+% TRANSFORM DATA AND ESTIMATE RE MODEL 
+% First of two alternative ways to transform the data:
+cy=y-lambda*py;                                                             % Using the transformed data from the Between Estimator (BE) to quasi-demean
+cx=x-lambda*px;
+% Second of two alternative ways to transform the data:
+C = eye(T)-lambda*P;                                                        % Transformation matrix used for the Random Effects (RE) transformation 
+cx = perm(C,x);                                                             % Quasi-demeaning the original data, using C
+cy = perm(C,y);
+
+% This estimation is under iid errors 
+[b_RE, se, u, cov_RE, R2, s2_RE] = myols(cy,cx);                            % NOTE: We can include all variables, when estimating RE
+mytable('Random Effects Estimator', lbly, lblx, b_RE, se, R2, s2_RE);
+
+%Estimate a robust variance:
+se_RE_robust = robust(cx,u,n,T);    % I'm not 100% this is correct
+mytable('Random Effects Estimator', lbly, lblx, b_RE, se_RE_robust, R2, s2_RE);
+
+
+%%
+%***************
+% HAUSMAN TEST *   
+%***************
+% Note: This Hausman test assumes RE is fully efficient
+% From above, we can see that the robust standard errors are much larger
+% than the iid errors. Hence, alpha is probably not iid, and then RE is
+% never fully efficient. There exists a robust version of this test that is
+% robust, (CT p.718), but it uses bootstrap replications which we have not
+% learned yet. So we just implement this test and comment on the
+% shortcommings for now. 
+
+b_diff=(b_FE-b_RE(2:3,:));                                                  %NOTE: Removes the estimates from the time-invariant varaibles in b_RE                                                 
+Vhaus=cov_FE-cov_RE(2:3,2:3);                                               %NOTE: Removes the estimates from the time-invariant varaibles in VAR(b_RE) 
+haus=b_diff'*(Vhaus\b_diff);                                                  % A\b=inv(A)*b                                                   
+prob=1-chi2cdf(haus,size(b_diff,1));                
+
+disp('Hausman test');
+disp('====================================================');
+disp('     b_FE     b_RE      b_dif                         ');
+disp([b_FE, b_RE(2:3,1),b_diff]);
+disp('----------------------------------------------------');
+disp(['Hausman statistic: ' num2str(haus)]);
+disp(['prob(haus=0):      ' num2str(prob)]);
+disp('====================================================');
+
+% Gives prob(RE is correct) = 0, hence FE seems more appropriate 
+
+% Below I've implemented some other tests we have used in the problem sets 
+
+%% Test for serial correlation (FE vs. FD)
+% If FD is the most appropriate model, rho = 0. If FE: rho = -1/2
+
+%First run a FD regression
+[b_FD, se, r, cov, R2, s2] = myols(dy,dx); 
+e = r;
+
+L = [zeros(1,T-1);eye(T-2,T-1)]; %Create a transformation matrix for the lag
+e1     = perm(L,e);   
+% Need to remove the first two observations of the errors for each i
+% First remove every 13th (T-th) period for each observation%
+e(1:T-1:end,:) = [] ; e(1:T-2:end,:) = [];      %Reduces to 4410 observations (reduces by 882=2n)
+e1(1:T-1:end,:) = []; e1(1:T-2:end,:) = [];     %Removes first every 12th observation (as we already lost T observations using FD)
+                                                % then removes every 11th
+                                                % observation, as we need
+                                                % to start from t=3
+% Now run a regression
+[b, se, r, cov, R2, s2] = myols(e,e1);
+lblx_eit ={'e(it-1)'};
+mytable('Test for serial correlation','OLS residual, e(it)', lblx_eit , b, se, R2, s2);
+% Gives a value of -0.1993, so in reality, none of the assumptions seems
+% correct 
+
+
+%% TEST OF STRICT EXOGENEITY ASSUMPTION 
+% FE require strict exogeneity, while FD require sequential only 
+% Here we test strict exogineity for both variables
+M = [zeros(T,1),eye(T,T-1)];                                                % Lead-matrix
+
+lemp_lead = perm(M,x(:,3));
+x2_exo = [x,lemp_lead];
+lcap_lead = perm(M,x(:,2));
+x1_exo = [x,lcap_lead];
+
+
+x1_exo(1:T:end,:) = [];                                                     % Delete observations from first year   
+x2_exo(1:T:end,:) = [];
+y_exo = y;
+y_exo(1:T:end,:) = [];                                                      % Delete observations from first year
+
+%FE transformation 
+Qs = eye(T-1)-ones(T-1,T-1)/(T-1);                                          % Remember T-1, since we lose 1987
+
+xw1_exo = perm(Qs,x1_exo);                                                    
+xw1_exo = xw1_exo(:,2:end);
+xw2_exo = perm(Qs,x2_exo);                                                    
+xw2_exo = xw2_exo(:,2:end);
+yw_exo = perm(Qs,y_exo);
+
+% FE estimation for lcap
+[b, se, r, cov, R2, s2] = myols(yw_exo,xw1_exo);
+s2=s2*((n*(T-1)-size(b,1))/(n*(T-2)-size(b,1)));                            % Need to adjust the variance of the FE-estimator, since we estimate N individual intercepts, remember T-1 time-points!
+se=sqrt(diag(s2*inv(xw1_exo'*xw1_exo)));
+lblx1 = {'lcap'; 'lemp'; 'lcap(i,t+1)'};
+mytable('Test of strict exogeneity assumption',lbly, lblx1,b,se,R2,s2);
+se = robust(xw1_exo,r,n,T-1);
+mytable('Test of strict exogeneity assumption (robust)',lbly, lblx1,b,se,R2,s2);
+% FE estimation for lemp
+[b, se, r, cov, R2, s2] = myols(yw_exo,xw2_exo);
+s2=s2*((n*(T-1)-size(b,1))/(n*(T-2)-size(b,1)));                            % Need to adjust the variance of the FE-estimator, since we estimate N individual intercepts, remember T-1 time-points!
+se=sqrt(diag(s2*inv(xw2_exo'*xw2_exo)));
+lblx2 = {'lcap'; 'lemp'; 'lemp(i,t+1)'};
+mytable('Test of strict exogeneity assumption',lbly, lblx2,b,se,R2,s2);
+se = robust(xw2_exo,r,n,T-1);
+mytable('Test of strict exogeneity assumption (robust)',lbly, lblx1,b,se,R2,s2);
+%For more on the test, see https://ink.library.smu.edu.sg/cgi/viewcontent.cgi?article=2935&context=soe_research
+% Under the null, the variable in any other period is insignificant. 
+
+
+
+%% QUESTION 2.2
+% Goal: Test if alpha+beta=1 
